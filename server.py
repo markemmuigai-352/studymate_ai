@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 app = FastAPI(title="StudyMate AI")
 ROOT = Path(__file__).parent
-MODEL = "gemini-3.5-flash-lite"
+MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
 
 class LessonRequest(BaseModel):
@@ -54,43 +54,43 @@ def home():
 
 
 def generate_json(prompt):
+    """Retry transient upstream failures; never misreport a temporary outage as a lesson."""
+    import random
+    import time
     if not os.getenv("GEMINI_API_KEY"):
-        raise HTTPException(
-            503, "GEMINI_API_KEY is missing from the server environment."
-        )
-
-    try:
-        client = genai.Client(
-            http_options=types.HttpOptions(timeout=120000)
-        )
-        import time
-
-        for attempt in range(3):
-            try:
-                response = client.models.generate_content(
-                    model=MODEL,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.4,
-                    ),
-                )
-                return json.loads(response.text)
-
-            except genai_errors.APIError as e:
-                if e.code not in (429, 500, 502, 503, 504) or attempt == 2:
-                    raise
-                time.sleep(2 ** attempt)
-
-    except genai_errors.APIError as e:
-        raise HTTPException(
-            502, f"Gemini API error ({e.code}). Please try again."
-        )
-    except (ValueError, TypeError):
-        raise HTTPException(
-            502, "Gemini returned an invalid response."
-        )
-
+        raise HTTPException(503, "AI is not configured. Set GEMINI_API_KEY in Render environment variables.")
+    client = genai.Client(http_options=types.HttpOptions(timeout=90000))
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model=MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json", temperature=0.35,
+                ),
+            )
+            if not response.text:
+                raise ValueError("Gemini returned an empty response")
+            return json.loads(response.text)
+        except genai_errors.APIError as exc:
+            code = int(getattr(exc, "code", 0) or 0)
+            transient = code in (429, 500, 502, 503, 504)
+            if transient and attempt < 2:
+                time.sleep(min(12, 2 ** (attempt + 1) + random.uniform(0, 1)))
+                continue
+            if code == 429:
+                raise HTTPException(503, "AI request limit reached. Please wait a little and try again.") from exc
+            if transient:
+                raise HTTPException(503, "The AI service is temporarily busy. Your topic is saved; please try again shortly.") from exc
+            if code in (400, 404):
+                raise HTTPException(502, "The configured Gemini model could not process this request. Check GEMINI_MODEL in Render.") from exc
+            raise HTTPException(502, "AI request failed. Please try again or check the Render logs.") from exc
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise HTTPException(502, "AI returned an invalid or incomplete response. Please retry.") from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(502, "Could not contact the AI service. Please try again shortly.") from exc
 
 
 def pdf_guidance(mode: str, exam: str) -> str:
@@ -446,3 +446,8 @@ async def extract_study_pdf(file: UploadFile = File(...)):
 @app.get('/dashboard-upgrade.js')
 def dashboard_upgrade_script():
     return FileResponse(ROOT / 'dashboard-upgrade.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})
+
+
+@app.get("/smart-pdf-help.js")
+def smart_pdf_help_script():
+    return FileResponse(ROOT / "smart-pdf-help.js", media_type="application/javascript", headers={"Cache-Control": "no-cache"})

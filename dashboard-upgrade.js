@@ -68,8 +68,25 @@ const oldFetch=window.fetch.bind(window);window.fetch=function(resource,options)
  if(mode&&active[mode]&&options?.body&&typeof options.body==='string'){
   try{const payload=JSON.parse(options.body);payload.source_text=active[mode].text;const sel=$('sm-source-'+mode);payload.source_mode=sel?.value||'reference';options={...options,body:JSON.stringify(payload)};}catch(e){console.warn('PDF reference was not attached',e)}
  }
+ // The visible language selector is authoritative for all AI generation calls.
+ if(mode&&options?.body&&typeof options.body==='string'){
+   try{const payload=JSON.parse(options.body);const lang=$('language')?.value;if(lang)payload.language=lang;options={...options,body:JSON.stringify(payload)}}catch(e){}
+ }
+ // A timed-out generation must recover the button instead of waiting forever.
+ if(mode&&options?.method?.toUpperCase()==='POST'){
+   const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),155000);
+   return oldFetch(resource,{...options,signal:controller.signal}).finally(()=>clearTimeout(timer));
+ }
  return oldFetch(resource,options);
 };
+// Switching language regenerates the currently selected lesson in that language.
+const langPicker=$('language');
+langPicker?.addEventListener('change',()=>{
+ const topic=$('topic')?.value?.trim();
+ const status=$('status');
+ if(status)status.textContent='Language changed to '+langPicker.value+'. New lessons and exams will use this language.';
+ if(topic && !($('lesson')?.hidden) && typeof $('go')?.click==='function') $('go').click();
+});
 // Keep exam questions and their solutions in the existing exam panel.
 focusPage(sessionStorage.getItem('sm-active-page')||'home');
 })();
