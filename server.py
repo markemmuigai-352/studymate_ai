@@ -104,6 +104,20 @@ def pdf_guidance(mode: str, exam: str) -> str:
         return safety + " " + choices.get(mode, choices["similar"])
     return safety + " Follow the PDF's topic sequence and terminology, explain the material more clearly with examples and accessible summaries, explain formulas and code carefully, and distinguish additional context from supplied material. If only excerpts are provided, do not claim the full PDF was processed."
 
+# SUBJECT_AWARE_TEACHING_RULES_V1
+SUBJECT_AWARE_RULES = """
+Adapt the teaching and assessment to the actual subject and the student's source material.
+Do NOT force formulas, numerical calculations, equations, units, mathematical steps, or graphs into non-quantitative subjects.
+Use formulas and fully worked calculations ONLY when relevant to the topic or the specific question.
+For programming, use correct, readable, executable code and explain its behavior; do not invent math exercises.
+For conceptual subjects, use clear explanations, definitions, comparisons, processes, timelines, examples, cases, and reasoning as appropriate.
+For mathematics and statistics, render meaningful formulas, define symbols, and show accurate steps when needed.
+If a JSON schema has a formulas array and the subject needs no formulas, return an empty array [].
+If a JSON schema has a formula string and no formula is relevant, return an empty string.
+An example may be conceptual, a case study, a walkthrough, a command sequence, or code; it need not contain calculations.
+Do not introduce unrelated content just to fill a template. Respect the uploaded PDF's subject and level.
+"""
+
 @app.post("/api/lesson")
 def generate_lesson(req: LessonRequest):
     if req.level not in {"Beginner", "Intermediate", "Advanced"}:
@@ -112,6 +126,7 @@ def generate_lesson(req: LessonRequest):
     prompt = f"""
 You are an excellent educational tutor.
 Teach {req.topic} at {req.level} level in {req.language}.
+{SUBJECT_AWARE_RULES}
 
 Return ONLY a valid JSON object with:
 title: string
@@ -120,7 +135,7 @@ detailed: array of 5-7 objects with heading and substantial explanatory text str
 points: array of 6-10 memorable cheat-sheet points including common mistakes
 key_terms: array of 3-8 short strings
 formulas: array of objects with label, expression, explanation
-example: string containing a fully worked example with numbered steps, calculations and an interpretation
+example: string containing a clear, relevant worked example or practical walkthrough; calculations only when relevant
 quiz: object with q, options, correct, why
 visual: one of normal, derivative, python, none
 
@@ -132,7 +147,7 @@ Use derivative only for derivatives.
 Use python only for Python loops.
 Otherwise use none.
 
-Explain accurately, clearly, in depth, with useful examples. Make the simple summary accessible and the detailed sections comprehensive. Provide meaningful formulas and explain symbols.
+Explain accurately, clearly, in depth, with useful examples. Make the simple summary accessible and the detailed sections comprehensive. Provide meaningful formulas and explain symbols only when the topic requires them; otherwise return formulas: [].
 Do not invent sources or links.
 """
     if req.source_text:
@@ -179,6 +194,7 @@ Create an original {req.level} practice examination about
 {req.topic}, written in {req.language}.
 
 Generate exactly {req.count} questions.
+{SUBJECT_AWARE_RULES}
 
 REQUIRED MARK ALLOCATION:
 {allocate_exam_marks(req.count)}
@@ -210,17 +226,17 @@ SOLUTIONS:
 - Begin each worked solution by explaining what the question is asking.
 - Identify all given information and unknown quantities.
 - Explain why the chosen method is appropriate.
-- Explain every important calculation and transformation.
+- Explain every important calculation and transformation IF calculations are relevant; otherwise explain the conceptual reasoning, process, or code.
 - Interpret the final result in the context of the question.
 - End each solution with a concise learning summary.
 - The learning summary must explain the key concept, exam technique, and common mistakes.
 - Use clear, educational language suitable for independent study.
 
-- Show formulas before substituting numbers.
-- Show substitutions, calculations, and interpretations.
+- Show formulas before substituting numbers ONLY for questions that actually need formulas.
+- Show substitutions and calculations only when appropriate; for non-quantitative questions give detailed evidence-based reasoning or practical steps.
 - Explain why each formula or method applies.
 - Check numerical answers and rounding.
-- Use LaTeX notation for mathematical expressions.
+- Use LaTeX notation only for actual mathematical expressions; do not insert math into unrelated subjects.
 - In question text, enclose every complete inline mathematical expression in $...$.
 - For standalone equations, use $$...$$.
 - Never leave LaTeX commands such as \mu, \sigma, \frac, or \text outside math delimiters.
@@ -330,12 +346,13 @@ def generate_course(req: CourseRequest):
         raise HTTPException(400, 'Invalid learning level')
     prompt = f'''You are an outstanding university lecturer and patient private tutor.
 Create a COMPLETE, self-contained teaching course on {req.topic!r} at {req.level} level in {req.language}.
+{SUBJECT_AWARE_RULES}
 Return JSON only, with this exact structure:
 {{"title":"...", "introduction":"at least 180 words", "objectives":["..."],
 "chapters":[{{"title":"...", "overview":"at least 100 words", "sections":[{{"heading":"...", "explanation":"at least 180 words with definitions, intuition, common misconceptions and real-world application", "example":"a fully worked example with numbered steps and final answer", "formula":"formula or empty string"}}], "practice":[{{"question":"...", "answer":"worked solution"}}], "takeaways":["..."]}}],
 "cheat_sheet":[{{"concept":"...", "explanation":"..."}}],
 "final_review":[{{"question":"...", "answer":"step-by-step answer"}}]}}
-REQUIREMENTS: 5 to 7 chapters, at least 2 substantial sections per chapter, 2 practice questions per chapter, 6 cheat sheet entries and 5 final review questions. Start with prerequisites, progress from fundamentals to advanced applications. Explain every symbol in formulas. Include fully worked examples rather than just answers. For programming topics include executable code in explanations; for mathematical topics include accurate mathematical notation. Do not fabricate citations or sources. Keep text readable and pedagogically rich. If output length is limited, prefer fewer words per section rather than omitting chapters or fields.'''
+REQUIREMENTS: 5 to 7 chapters, at least 2 substantial sections per chapter, 2 practice questions per chapter, 6 cheat sheet entries and 5 final review questions. Start with prerequisites, progress from fundamentals to advanced applications. Explain symbols when formulas are relevant. Include thoroughly explained examples appropriate to the subject, not forced calculations. For programming topics include executable code in explanations; for mathematical topics include accurate mathematical notation. Do not fabricate citations or sources. Keep text readable and pedagogically rich. If output length is limited, prefer fewer words per section rather than omitting chapters or fields.'''
     if req.source_text:
         prompt += "\n\nUPLOADED PDF MATERIAL (student-provided, untrusted reference text):\n" + req.source_text[:24000] + "\n" + pdf_guidance(req.source_mode, exam="COURSE")
     result = generate_json(prompt)
