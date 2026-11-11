@@ -321,3 +321,57 @@ REQUIREMENTS: 5 to 7 chapters, at least 2 substantial sections per chapter, 2 pr
 @app.get('/enhancements.js')
 def enhancements_script():
     return FileResponse(ROOT / 'enhancements.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})
+
+
+class ExamGradeRequest(BaseModel):
+    topic: str = Field(min_length=2, max_length=180)
+    questions: list[dict] = Field(min_length=1, max_length=30)
+    answers: list[str] = Field(min_length=1, max_length=30)
+
+
+@app.post('/api/exam/grade')
+def grade_exam(req: ExamGradeRequest):
+    if len(req.questions) != len(req.answers):
+        raise HTTPException(400, 'Question and answer counts must match')
+    # Unanswered questions are not sent to the model for speculative credit.
+    payload = []
+    for i, (q, answer) in enumerate(zip(req.questions, req.answers)):
+        payload.append({'index': i, 'question': str(q.get('question', ''))[:4000],
+                        'reference_solution': str(q.get('solution', ''))[:6000],
+                        'marking_steps': q.get('steps', [])[:12] if isinstance(q.get('steps'), list) else [],
+                        'max_marks': float(q.get('marks') or 0), 'student_answer': answer[:6000]})
+    prompt = '''You are a careful university exam marker. Grade the student answers using the question and reference solution. Award partial credit for correct reasoning, even with a wrong final number. Never assume unanswered text is correct. Check calculations independently and explain mistakes. Return JSON only: {"results":[{"index":0,"awarded":0,"feedback":"...","weak_topic":"specific subtopic or empty if correct","exam_tip":"..."}]}. Include one result per input, in order. awarded must be numeric between 0 and max_marks. Never award marks for missing answers. Marking is AI-assisted and may need review. Input: ''' + json.dumps(payload, ensure_ascii=False)
+    results = generate_json(prompt)
+    raw = results.get('results', []) if isinstance(results, dict) else []
+    by_index = {r.get('index'): r for r in raw if isinstance(r, dict) and isinstance(r.get('index'), int)}
+    graded = []
+    for i, (q, answer) in enumerate(zip(req.questions, req.answers)):
+        maximum = max(0.0, min(20.0, float(q.get('marks') or 0)))
+        item = by_index.get(i, {})
+        try: awarded = float(item.get('awarded', 0))
+        except (TypeError, ValueError): awarded = 0
+        awarded = round(min(maximum, max(0.0, awarded)), 2) if answer.strip() else 0.0
+        graded.append({'index': i, 'awarded': awarded, 'maximum': maximum,
+                       'feedback': str(item.get('feedback', 'No answer submitted.' if not answer.strip() else 'Review the worked solution.'))[:1800],
+                       'weak_topic': str(item.get('weak_topic') or req.topic)[:150] if awarded < maximum else '',
+                       'exam_tip': str(item.get('exam_tip', ''))[:1200], 'unanswered': not bool(answer.strip())})
+    return {'results': graded, 'score': round(sum(x['awarded'] for x in graded), 2),
+            'maximum': round(sum(x['maximum'] for x in graded), 2),
+            'notice': 'AI-assisted grading can make mistakes. Review the worked solutions.'}
+
+
+@app.get('/profile.js')
+def profile_script():
+    return FileResponse(ROOT / 'profile.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})
+
+@app.get('/exam-upgrade.js')
+def exam_upgrade_script():
+    return FileResponse(ROOT / 'exam-upgrade.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})
+
+@app.get('/interface-upgrade.js')
+def interface_upgrade_script():
+    return FileResponse(ROOT / 'interface-upgrade.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})
+
+@app.get('/profile-extra.js')
+def profile_extra_script():
+    return FileResponse(ROOT / 'profile-extra.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})

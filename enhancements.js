@@ -26,10 +26,10 @@ sm('authForm').onsubmit=async e=>{
  try{
   const res=await fetch('/api/'+smAuthMode,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:sm('authEmail').value,password:sm('authPassword').value})});
   const data=await res.json();if(!res.ok)throw Error(data.detail||'Unable to continue.');
-  smUser=data.user;sm('account-button').textContent=smUser.email;closeAuth();smEnter();await loadCloudHistory();
+  smUser=data.user;sm('account-button').textContent=smUser.name||'Student';closeAuth();smEnter();await loadCloudHistory();
  }catch(err){sm('authError').textContent=err.message}finally{sm('authSubmit').disabled=false}
 };
-async function refreshUser(){try{const r=await fetch('/api/me');if(r.ok){const d=await r.json();smUser=d.user;if(smUser){sm('account-button').textContent=smUser.email;await loadCloudHistory();}}}catch(err){console.warn('Account status unavailable',err)}}
+async function refreshUser(){try{const r=await fetch('/api/me');if(r.ok){const d=await r.json();smUser=d.user;if(smUser){sm('account-button').textContent=smUser.name||'Student';await loadCloudHistory();}}}catch(err){console.warn('Account status unavailable',err)}}
 
 async function loadCloudHistory(){
  if(!smUser)return;
@@ -60,7 +60,7 @@ function renderCourse(course){
  let html=`<div class="course-content"><div class="course-tools"><button id="coursePrint">↓ Save course as PDF</button><button id="courseSave">☆ Save to my account</button><button id="courseExpand">Expand all chapters</button></div><h2>${smEsc(course.title)}</h2><p style="white-space:pre-wrap;line-height:1.7">${smEsc(course.introduction)}</p><h3>What you will learn</h3><ul>${arr(course.objectives).map(x=>`<li>${smEsc(x)}</li>`).join('')}</ul>`;
  arr(course.chapters).forEach((ch,i)=>{
   html+=`<details class="course-chapter" ${i===0?'open':''}><summary>Chapter ${i+1}: ${smEsc(ch.title)}</summary><p style="white-space:pre-wrap;line-height:1.7">${smEsc(ch.overview)}</p>`;
-  arr(ch.sections).forEach((sec,j)=>{html+=`<div class="course-section"><h3>${i+1}.${j+1} ${smEsc(sec.heading)}</h3><p>${smEsc(sec.explanation)}</p>${sec.formula?`<pre>${smEsc(sec.formula)}</pre>`:''}<h4>Worked example</h4><p>${smEsc(sec.example)}</p></div>`});
+  arr(ch.sections).forEach((sec,j)=>{html+=`<div class="course-section"><h3>${i+1}.${j+1} ${smEsc(sec.heading)}</h3><p>${smEsc(sec.explanation)}</p>${sec.formula?`<div class="formulabox"><strong>Formula</strong><div>\\[${smEsc(sec.formula)}\\]</div></div>`:''}<h4>Worked example</h4><p>${smEsc(sec.example)}</p></div>`});
   html+='<h3>Practice and worked answers</h3>'+arr(ch.practice).map((q,j)=>`<details class="course-practice"><summary>Exercise ${j+1}: ${smEsc(q.question)}</summary><p style="white-space:pre-wrap">${smEsc(q.answer)}</p></details>`).join('');
   html+='<h3>Chapter takeaways</h3><ul>'+arr(ch.takeaways).map(x=>`<li>${smEsc(x)}</li>`).join('')+'</ul></details>';
  });

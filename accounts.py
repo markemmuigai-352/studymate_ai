@@ -210,3 +210,43 @@ def change_password(body: PasswordUpdate, request: Request):
         query(conn,'UPDATE users SET password=? WHERE id=?',(password_hash(body.new_password),user['id']))
         query(conn,'DELETE FROM sessions WHERE user_id=?',(user['id'],))
     return {'ok':True,'message':'Password changed. Please log in again.'}
+
+class EmojiAvatar(BaseModel):
+    emoji: str = Field(min_length=1, max_length=8)
+
+@router.post('/profile/emoji')
+def set_emoji_avatar(body: EmojiAvatar, request: Request):
+    user = user_for(request)
+    if not user:
+        raise HTTPException(401, 'Please log in')
+    allowed = {'🧑‍🎓','👩‍🎓','👨‍💻','👩‍💻','🧠','🦉','🐼','🦊','🚀','⭐','🤖','📚'}
+    if body.emoji not in allowed:
+        raise HTTPException(400, 'Choose an available avatar')
+    # SVG data URL stored as a profile avatar, with the emoji escaped by fixed allowlist.
+    import urllib.parse
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" width="96" height="96"><rect width="96" height="96" rx="48" fill="#eee8ff"/><text x="48" y="65" font-size="52" text-anchor="middle">{body.emoji}</text></svg>'
+    avatar = 'data:image/svg+xml,' + urllib.parse.quote(svg)
+    with db() as conn:
+        query(conn,'INSERT INTO profiles(user_id,display_name,avatar) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET avatar=excluded.avatar',(user['id'],'',avatar))
+    return {'user': public_user(user['id'], user['email'])}
+
+class DeleteAccountRequest(BaseModel):
+    password: str
+
+@router.post('/profile/delete-account')
+def delete_account(body: DeleteAccountRequest, request: Request, response: Response):
+    user = user_for(request)
+    if not user:
+        raise HTTPException(401, 'Please log in')
+    with db() as conn:
+        row = query(conn,'SELECT password FROM users WHERE id=?',(user['id'],)).fetchone()
+        if not row:
+            raise HTTPException(404,'Account not found')
+        salt, expected = row['password'].split('$', 1)
+        actual = hashlib.pbkdf2_hmac('sha256',body.password.encode(),bytes.fromhex(salt),350000).hex()
+        if not hmac.compare_digest(actual, expected):
+            raise HTTPException(403,'Incorrect password')
+        for table, column in [('history','user_id'),('sessions','user_id'),('profiles','user_id'),('users','id')]:
+            query(conn, f'DELETE FROM {table} WHERE {column}=?',(user['id'],))
+    response.delete_cookie(COOKIE, path='/')
+    return {'deleted': True}
