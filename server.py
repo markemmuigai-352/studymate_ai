@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from pathlib import Path
 import fitz
@@ -9,6 +10,7 @@ from google import genai
 from google.genai import types, errors as genai_errors
 from pydantic import BaseModel, Field
 
+logger = logging.getLogger("studymate.ai")
 app = FastAPI(title="StudyMate AI")
 ROOT = Path(__file__).parent
 MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
@@ -75,21 +77,24 @@ def generate_json(prompt):
         except genai_errors.APIError as exc:
             code = int(getattr(exc, "code", 0) or 0)
             transient = code in (429, 500, 502, 503, 504)
+            logger.warning("Gemini request failed: model=%s status=%s attempt=%s/3 prompt_chars=%s", MODEL, code, attempt + 1, len(prompt))
             if transient and attempt < 2:
                 time.sleep(min(12, 2 ** (attempt + 1) + random.uniform(0, 1)))
                 continue
             if code == 429:
-                raise HTTPException(503, "AI request limit reached. Please wait a little and try again.") from exc
+                raise HTTPException(429, "Gemini request limit reached. Please wait before trying again.") from exc
             if transient:
-                raise HTTPException(503, "The AI service is temporarily busy. Your topic is saved; please try again shortly.") from exc
+                raise HTTPException(503, "The AI service is temporarily unavailable. Please retry shortly.") from exc
             if code in (400, 404):
                 raise HTTPException(502, "The configured Gemini model could not process this request. Check GEMINI_MODEL in Render.") from exc
             raise HTTPException(502, "AI request failed. Please try again or check the Render logs.") from exc
         except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            logger.warning("Gemini returned invalid JSON: model=%s error_type=%s", MODEL, type(exc).__name__)
             raise HTTPException(502, "AI returned an invalid or incomplete response. Please retry.") from exc
         except HTTPException:
             raise
         except Exception as exc:
+            logger.exception("Unexpected Gemini request error: model=%s error_type=%s", MODEL, type(exc).__name__)
             raise HTTPException(502, "Could not contact the AI service. Please try again shortly.") from exc
 
 
