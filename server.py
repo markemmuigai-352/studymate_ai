@@ -287,3 +287,37 @@ IMPORTANT:
         return data
     except (KeyError, TypeError, ValueError):
         raise HTTPException(502, "Incomplete exam. Please try again.")
+
+# Structured full-course generation and optional student accounts.
+from accounts import router as account_router, init_db
+app.include_router(account_router)
+
+@app.on_event('startup')
+def initialize_accounts():
+    init_db()
+
+class CourseRequest(BaseModel):
+    topic: str = Field(min_length=2, max_length=180)
+    level: str = 'Beginner'
+    language: str = 'English'
+
+@app.post('/api/course')
+def generate_course(req: CourseRequest):
+    if req.level not in {'Beginner', 'Intermediate', 'Advanced'}:
+        raise HTTPException(400, 'Invalid learning level')
+    prompt = f'''You are an outstanding university lecturer and patient private tutor.
+Create a COMPLETE, self-contained teaching course on {req.topic!r} at {req.level} level in {req.language}.
+Return JSON only, with this exact structure:
+{{"title":"...", "introduction":"at least 180 words", "objectives":["..."],
+"chapters":[{{"title":"...", "overview":"at least 100 words", "sections":[{{"heading":"...", "explanation":"at least 180 words with definitions, intuition, common misconceptions and real-world application", "example":"a fully worked example with numbered steps and final answer", "formula":"formula or empty string"}}], "practice":[{{"question":"...", "answer":"worked solution"}}], "takeaways":["..."]}}],
+"cheat_sheet":[{{"concept":"...", "explanation":"..."}}],
+"final_review":[{{"question":"...", "answer":"step-by-step answer"}}]}}
+REQUIREMENTS: 5 to 7 chapters, at least 2 substantial sections per chapter, 2 practice questions per chapter, 6 cheat sheet entries and 5 final review questions. Start with prerequisites, progress from fundamentals to advanced applications. Explain every symbol in formulas. Include fully worked examples rather than just answers. For programming topics include executable code in explanations; for mathematical topics include accurate mathematical notation. Do not fabricate citations or sources. Keep text readable and pedagogically rich. If output length is limited, prefer fewer words per section rather than omitting chapters or fields.'''
+    result = generate_json(prompt)
+    if not isinstance(result,dict) or not isinstance(result.get('chapters'),list) or not result['chapters']:
+        raise HTTPException(502, 'AI returned an incomplete course. Please retry.')
+    return result
+
+@app.get('/enhancements.js')
+def enhancements_script():
+    return FileResponse(ROOT / 'enhancements.js', media_type='application/javascript', headers={'Cache-Control':'no-cache'})

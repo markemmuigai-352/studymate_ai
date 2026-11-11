@@ -1,4 +1,4 @@
-const CACHE = 'studymate-shell-v1';
+const CACHE = 'studymate-shell-v3';
 const SHELL = ['/', '/manifest.webmanifest', '/icons/icon-192.png', '/icons/icon-512.png'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(SHELL)));
