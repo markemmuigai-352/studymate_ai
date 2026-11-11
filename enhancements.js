@@ -45,8 +45,8 @@ async function saveToAccount(topic, level, lesson){
  if(!res.ok){const d=await res.json();throw Error(d.detail||'Could not save lesson')}
  await loadCloudHistory();
 }
-function showCourse(){sm('coursePanel').hidden=false;sm('courseTopic').value=sm('topic').value||sm('courseTopic').value;sm('coursePanel').scrollIntoView({behavior:'smooth',block:'start'})}
-sm('toolCourse').onclick=showCourse;
+function showCourse(autoGenerate=false){sm('coursePanel').hidden=false;sm('courseTopic').value=sm('topic').value||sm('courseTopic').value;sm('coursePanel').scrollIntoView({behavior:'smooth',block:'start'});if(autoGenerate)sm('generateCourse').click()}
+
 sm('generateCourse').onclick=async()=>{
  const topic=sm('courseTopic').value.trim()||sm('topic').value.trim();if(!topic){sm('courseStatus').textContent='Enter a topic first.';return}
  sm('courseStatus').textContent='Writing your complete course. This may take a minute...';sm('generateCourse').disabled=true;
@@ -64,7 +64,7 @@ function renderCourse(course){
   html+='<h3>Practice and worked answers</h3>'+arr(ch.practice).map((q,j)=>`<details class="course-practice"><summary>Exercise ${j+1}: ${smEsc(q.question)}</summary><p style="white-space:pre-wrap">${smEsc(q.answer)}</p></details>`).join('');
   html+='<h3>Chapter takeaways</h3><ul>'+arr(ch.takeaways).map(x=>`<li>${smEsc(x)}</li>`).join('')+'</ul></details>';
  });
- html+='<h3>Cheat sheet</h3>'+arr(course.cheat_sheet).map(x=>`<div class="course-practice"><strong>${smEsc(x.concept)}</strong><p>${smEsc(x.explanation)}</p></div>`).join('');
+ if(/normal distribution|confidence interval/i.test(course.title||'')){html+='<h3>Visual overview</h3><div class="visual">'+chart('normal')+'</div>'}else if(/derivative/i.test(course.title||'')){html+='<h3>Visual overview</h3><div class="visual">'+chart('derivative')+'</div>'}html+='<h3>Cheat sheet</h3>'+arr(course.cheat_sheet).map(x=>`<div class="course-practice"><strong>${smEsc(x.concept)}</strong><p>${smEsc(x.explanation)}</p></div>`).join('');
  html+='<h3>Final review questions</h3>'+arr(course.final_review).map((q,i)=>`<details class="course-practice"><summary>${i+1}. ${smEsc(q.question)}</summary><p style="white-space:pre-wrap">${smEsc(q.answer)}</p></details>`).join('')+'</div>';
  sm('courseContent').innerHTML=html;
  sm('coursePrint').onclick=()=>window.print();

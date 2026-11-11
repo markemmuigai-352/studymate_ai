@@ -99,11 +99,11 @@ Teach {req.topic} at {req.level} level in {req.language}.
 Return ONLY a valid JSON object with:
 title: string
 summary: string of 2-4 simple sentences
-detailed: array of 3-6 objects with heading and text strings
-points: array of 4-7 key point strings
+detailed: array of 5-7 objects with heading and substantial explanatory text strings, each with definitions, intuition, steps and a practical example
+points: array of 6-10 memorable cheat-sheet points including common mistakes
 key_terms: array of 3-8 short strings
 formulas: array of objects with label, expression, explanation
-example: string containing a worked example with numbered steps
+example: string containing a fully worked example with numbered steps, calculations and an interpretation
 quiz: object with q, options, correct, why
 visual: one of normal, derivative, python, none
 
@@ -115,7 +115,7 @@ Use derivative only for derivatives.
 Use python only for Python loops.
 Otherwise use none.
 
-Explain accurately, clearly, and with useful examples.
+Explain accurately, clearly, in depth, with useful examples. Make the simple summary accessible and the detailed sections comprehensive. Provide meaningful formulas and explain symbols.
 Do not invent sources or links.
 """
     data = generate_json(prompt)

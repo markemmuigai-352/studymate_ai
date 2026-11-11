@@ -9,7 +9,7 @@ import time
 from contextlib import contextmanager
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Request, Response, UploadFile, File
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix='/api')
@@ -41,6 +41,7 @@ def query(conn, sql, params=()):
 def init_db():
     with db() as conn:
         query(conn, '''CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, password TEXT NOT NULL, created_at BIGINT NOT NULL)''')
+        query(conn, '''CREATE TABLE IF NOT EXISTS profiles (user_id TEXT PRIMARY KEY, display_name TEXT NOT NULL DEFAULT '', avatar TEXT NOT NULL DEFAULT '')''')
         query(conn, '''CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id TEXT NOT NULL, expires_at BIGINT NOT NULL)''')
         query(conn, '''CREATE TABLE IF NOT EXISTS history (id TEXT PRIMARY KEY, user_id TEXT NOT NULL, topic TEXT NOT NULL, level TEXT NOT NULL, payload TEXT NOT NULL, created_at BIGINT NOT NULL)''')
 
@@ -67,12 +68,17 @@ def user_for(request):
         row = query(conn, 'SELECT users.id, users.email FROM sessions JOIN users ON users.id = sessions.user_id WHERE token_hash=? AND expires_at>?', (digest, int(time.time()))).fetchone()
     return dict(row) if row else None
 
+def public_user(user_id, email):
+    with db() as conn:
+        profile=query(conn,'SELECT display_name,avatar FROM profiles WHERE user_id=?',(user_id,)).fetchone()
+    return {'id':user_id,'email':email,'name':profile['display_name'] if profile else '', 'avatar':profile['avatar'] if profile else ''}
+
 def login_response(user, response):
     token = secrets.token_urlsafe(32)
     with db() as conn:
         query(conn, 'INSERT INTO sessions (token_hash,user_id,expires_at) VALUES (?,?,?)', (hashlib.sha256(token.encode()).hexdigest(), user['id'], int(time.time())+30*86400))
     response.set_cookie(COOKIE, token, max_age=30*86400, httponly=True, secure=os.getenv('ALLOW_HTTP_COOKIES')!='1', samesite='lax', path='/')
-    return {'user': {'email':user['email']}}
+    return {'user': public_user(user['id'], user['email'])}
 
 @router.post('/register')
 def register(body: Credentials, response: Response):
@@ -107,7 +113,8 @@ def login(body: Credentials, response: Response):
 
 @router.get('/me')
 def me(request: Request):
-    return {'user':user_for(request), 'cloud_history_enabled':bool(DATABASE_URL)}
+    u=user_for(request)
+    return {'user':public_user(u['id'],u['email']) if u else None, 'cloud_history_enabled':bool(DATABASE_URL)}
 
 @router.post('/logout')
 def logout(request: Request, response: Response):
@@ -148,3 +155,58 @@ def delete_history(item_id: str, request: Request):
     with db() as conn:
         query(conn,'DELETE FROM history WHERE id=? AND user_id=?',(item_id,user['id']))
     return {'ok':True}
+
+
+class ProfileUpdate(BaseModel):
+    name: str = Field(min_length=1,max_length=80)
+
+class PasswordUpdate(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=12,max_length=200)
+
+@router.patch('/profile')
+def update_profile(body: ProfileUpdate, request: Request):
+    user=user_for(request)
+    if not user: raise HTTPException(401,'Please log in.')
+    name=body.name.strip()
+    if not name: raise HTTPException(400,'Enter a display name.')
+    with db() as conn:
+        query(conn,'INSERT INTO profiles(user_id,display_name,avatar) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET display_name=excluded.display_name',(user['id'],name,''))
+    return {'user':public_user(user['id'],user['email'])}
+
+@router.post('/profile/avatar')
+async def upload_avatar(request: Request, file: UploadFile = File(...)):
+    user=user_for(request)
+    if not user: raise HTTPException(401,'Please log in.')
+    data=await file.read(400001)
+    if len(data)>400000: raise HTTPException(413,'Maximum photo size is 400 KB.')
+    import base64
+    if data.startswith(b'\x89PNG\r\n\x1a\n'): mime='image/png'
+    elif data.startswith(b'\xff\xd8\xff'): mime='image/jpeg'
+    elif data.startswith(b'RIFF') and data[8:12]==b'WEBP': mime='image/webp'
+    else: raise HTTPException(400,'Use a PNG, JPEG or WebP image.')
+    avatar='data:'+mime+';base64,'+base64.b64encode(data).decode()
+    with db() as conn:
+        query(conn,'INSERT INTO profiles(user_id,display_name,avatar) VALUES (?,?,?) ON CONFLICT(user_id) DO UPDATE SET avatar=excluded.avatar',(user['id'],'',avatar))
+    return {'user':public_user(user['id'],user['email'])}
+
+@router.delete('/profile/avatar')
+def remove_avatar(request: Request):
+    user=user_for(request)
+    if not user: raise HTTPException(401,'Please log in.')
+    with db() as conn:
+        query(conn,'UPDATE profiles SET avatar=? WHERE user_id=?',('',user['id']))
+    return {'user':public_user(user['id'],user['email'])}
+
+@router.post('/profile/password')
+def change_password(body: PasswordUpdate, request: Request):
+    user=user_for(request)
+    if not user: raise HTTPException(401,'Please log in.')
+    with db() as conn:
+        row=query(conn,'SELECT password FROM users WHERE id=?',(user['id'],)).fetchone()
+        salt,digest=row['password'].split('$',1)
+        if not hmac.compare_digest(password_hash(body.current_password,salt).split('$',1)[1],digest):
+            raise HTTPException(403,'Current password is incorrect.')
+        query(conn,'UPDATE users SET password=? WHERE id=?',(password_hash(body.new_password),user['id']))
+        query(conn,'DELETE FROM sessions WHERE user_id=?',(user['id'],))
+    return {'ok':True,'message':'Password changed. Please log in again.'}
